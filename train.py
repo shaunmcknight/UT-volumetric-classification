@@ -4,6 +4,7 @@ import time
 import datetime
 import math
 from pathlib import Path
+import shutil
 
 
 import torchvision.transforms as transforms
@@ -29,6 +30,9 @@ import matplotlib.image as mpimg
 from utils import *
 from classifier import *
 
+import warnings
+warnings.filterwarnings("ignore")
+
 plt.style.use(['science', 'ieee','no-latex', 'bright'])
 
 ##############################################
@@ -47,27 +51,35 @@ class Hyperparameters(object):
 
 def train(
     train_dataloader,
+    val_dataloader,
     n_epochs,
     criterion,
     optimizer,
     Tensor,
     early_stop,
     Net,
-    iteration
+    batch_size,
+    iteration,
+    device
 ):
     losses = []
+    val_losses=[]
+    val_loss_plot=[]
+    
+    cumulative_batch_count=0
     # TRAINING
-    prev_time = time.time()
-    for epoch in range(hp.epoch, n_epochs):
+    start_time = time.time()
+    prev_time = start_time
+    for epoch in range(0, n_epochs):
         for i, batch in enumerate(train_dataloader):
+            Net.train()
             images, labels = batch
-            print(type())
             images.type(Tensor)
+            labels = torch.from_numpy(np.array(labels))
             labels.type(Tensor)
 
-            if torch.cuda.is_available():
-                images = images.cuda()
-                labels = labels.cuda()
+            images = images.to(device)
+            labels = labels.to(device)
             # zero the parameter gradients
             optimizer.zero_grad()
 
@@ -93,58 +105,117 @@ def train(
                     n_epochs,
                     i,
                     len(train_dataloader),
-                    np.mean(loss.item()*hp.batch_size),
+                    loss.item(),
                     time_left,
                 )
             )
 
-            losses.append(np.mean(loss.item()*hp.batch_size))
+            losses.append(loss.item())
+            
+            cumulative_batch_count+=1#len(train_dataloader)
 
+            if i%10 == 0:
+                Net.eval()
+                batch_val_loss=[]
+                with torch.no_grad():
+                    for j, batch in enumerate(val_dataloader):
+                        images, labels = batch
+                        images.type(Tensor)
+                        labels = torch.from_numpy(np.array(labels))
+                        labels.type(Tensor)
+        
+                        images = images.to(device)
+                        labels = labels.to(device)
+                            
+                        val_outputs = Net(images)
+                        val_loss = criterion(val_outputs.squeeze(), labels)
+                        
+                        batch_val_loss.append(val_loss.item())
+                   
+                    val_losses.append(np.mean(batch_val_loss))
+                    val_loss_plot.append(cumulative_batch_count)
+    
+                    print("\r[Cumulative Batch %d] [Validation loss %f]" 
+                          %(cumulative_batch_count, np.mean(batch_val_loss)))
+                    
+                    save_path = "saved_model_"+str(cumulative_batch_count)+".pt"
+                    torch.save(Net.state_dict(), save_path)
+                    
             prev_time = time.time()
 
-        if (np.mean(loss.item()*hp.batch_size)) < early_stop:
+            if (loss.item()) < early_stop:
+                print('Early stop triggered at ', early_stop)
+                break
+        if (loss.item()) < early_stop:
             break
+        
 
     print('Finished Training')
+    print('Total training time ', datetime.timedelta(
+        seconds=time.time()-start_time))
+    
+    best_model = np.array(val_loss_plot)[np.argmin(np.array(val_losses))]
+    print('Best performing model at batch ', best_model, ' with score ', np.min(val_losses))
+    
+    dest_path = os.path.join('best_models_constant_5', "saved_model_"+str(iteration)+".pt")
 
+    shutil.copy("saved_model_"+str(best_model)+".pt", dest_path)
+
+    # plt.figure()
+    # plt.plot(losses)
+    # plt.title('Network Losses (Batch average)')
+    # plt.xlabel('Batch')
+    # plt.ylabel('Loss')
+    # plt.show()
+    
+    # plt.figure()
+    # plt.plot(val_loss_plot, val_losses)
+    # plt.title('Network validation Losses (Batch average)')
+    # plt.xlabel('Batch')
+    # plt.ylabel('Loss')
+    # plt.show()
+    
     plt.figure()
-    plt.plot(losses)
-    plt.title('Network Losses (Batch average)')
-    plt.xlabel('Batch')
+    plt.plot(losses, label='Training loss')
+    plt.plot(val_loss_plot, val_losses, label='Validation loss')
+    plt.title('Network Losses (Batch averaged)')
+    plt.xlabel(('Batch - best model: ', str(best_model)))
     plt.ylabel('Loss')
+    plt.legend()
+    plt.savefig('losses.png')
     plt.show()
 
 
-def test(dataloader, description, disp_CM, Net, Tensor):
+def test(dataloader, description, disp_CM, Net, Tensor, device):
     true_list = []
     pred_list = []
     pred_list_raw = []
     Net.eval()
-    Net.cpu()  # cuda()
+    Net.cuda()
     images = []
     labels = []
+    print(description)
     with torch.no_grad():
         for i, batch in enumerate(dataloader):
             images, labels = batch
             images.type(Tensor)
             labels.type(Tensor)
 
-            if torch.cuda.is_available():
-                images = images.cpu()  # cuda()
-                labels = labels.cpu()  # cuda()
+            images = images.to(device)
+            labels = labels.to(device)
 
-            for i in range(len(labels.numpy())):
-                true_list.append(labels.numpy()[i])
+            for i in range(len(labels.cpu().detach().numpy())):
+                true_list.append(labels.cpu().detach().numpy()[i])
 
             output_raw = Net(images)
             output = torch.sigmoid(output_raw)
             pred_tag = torch.round(output)
             
             [pred_list.append(pred_tag[i]) for i in range(
-                len(pred_tag.squeeze().cpu().numpy()))]
+                pred_tag.squeeze().cpu().numpy().size)]
             
             [pred_list_raw.append(output[i]) for i in range(
-                len(output.squeeze().cpu().numpy()))]
+                output.squeeze().cpu().numpy().size)]
             
     pred_list = [a.squeeze().tolist() for a in pred_list]
     pred_list_raw = [a.squeeze().tolist() for a in pred_list_raw]
@@ -174,6 +245,8 @@ def test(dataloader, description, disp_CM, Net, Tensor):
         disp.ax_.set_title(description)
         plt.show()        
         
+    print('Pred ', pred_list)
+    print('True ', true_list)
 
     precision, recall, f_score, support = metrics.precision_recall_fscore_support(
         true_list, pred_list)
@@ -310,60 +383,71 @@ def plot_threshold(fpr, tpr, thresholds):
     plt.legend()
     plt.show()
         
-def main(HP, train_dataloader, validation_dataloader, test_dataloader, cuda_device, iteration = None):
-    
-    #[n_epochs, batch_size, lr, momentum, early_stop, conv_layers, out_channel_ratio, FC_layers]
-    
-    if cuda_device != None:
-        torch.cuda.set_device(cuda_device)
- 
-    global hp
-
-    hp = Hyperparameters(
-        epoch=0,
-        n_epochs=HP['n_epochs'],
-        dataset_train_mode="train",
-        dataset_test_mode="test",
-        batch_size=HP['batch_size'],
-        lr=HP['lr'],
-        momentum=HP['momentum'],
-        img_size=64,
-        no_samples=1000,
-        channels=1,
-        early_stop=HP['early_stop']
-    )
+def main(HP, train_dataloader, validation_dataloader, test_dataloader, iteration = None):
+        
 
     ##############################################
     # SETUP, LOSS, INITIALIZE MODELS and OPTIMISERS
     ##############################################
     
-    input_shape = (hp.channels, hp.img_size, hp.no_samples, hp.img_size)
+    input_shape = (1, 64, 1024, 64)
     
     # Net = Network(input_shape)
+    # CNN3D
+    # CNN3D_Designed
+    # Net = CNN3D_Designed(input_shape, 
+    #             num_reduction=HP['reduction_layers'],
+    #             num_conv=HP['conv_layers'],
+    #             channel_ratio=HP['out_channel_ratio'],
+    #             kernel_reduction=HP['kernel_size_reduction'],
+    #             kernel=HP['kernel_size'], 
+    #             pool_layers=HP['pool_layers'],
+    #             pooling=HP['pool_mode'],
+    #             num_fc=HP['FC_layers'],
+    #             normalisation=HP['Norm'])
     
-    Net = CNN3D(input_shape, conv_layers=HP['conv_layers'],
-                         kernel_size=3, out_channel_ratio=HP['out_channel_ratio'],
-                         FC_layers=HP['FC_layers'])
+    Net = CNN3D_Designed_Constant(input_shape, 
+                num_reduction=HP['reduction_layers'],
+                num_conv=HP['conv_layers'],
+                channel_ratio=HP['out_channel_ratio'],
+                kernel_reduction=HP['kernel_size_reduction'],
+                kernel=HP['kernel_size'], 
+                pool_layers=HP['pool_layers'],
+                pooling=HP['pool_mode'],
+                num_fc=HP['FC_layers'],
+                normalisation=HP['Norm'])
+    
+    # Net = CNN3D(input_shape, num_conv=4, channel_ratio=1, kernel=7, pool=2, num_fc=2, normalisation='batch')
     
     # Network summary info
     print('Network')
-    
     # print(Net)
-    print(summary(Net.float(), input_size=(hp.batch_size, hp.channels, hp.img_size, hp.no_samples, hp.img_size)))
+    print(summary(Net.float(), input_size=(HP['batch_size'], 
+                                           input_shape[0], input_shape[1], input_shape[2], input_shape[3])))
+    # print('Net2')
+    # print(CNN3D(input_shape))
     
     criterion = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.SGD(Net.parameters(), lr=hp.lr, momentum=hp.momentum)
+    # optimizer = torch.optim.SGD(Net.parameters(), lr=HP['lr'], momentum=HP['momentum'])
+    optimizer = torch.optim.Adam(Net.parameters())
     
     Net = Net.double()
+    
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    
+    print("Using CUDA" if torch.cuda.is_available() else "Not using CUDA")
+    if torch.cuda.device_count() > 1:
+        print("USing ", torch.cuda.device_count(), "GPUs!")
+        Net = nn.DataParallel(Net)
+    
+    Net.to(device)
+
         
-    cuda = True if torch.cuda.is_available() else False
-    print("Using CUDA" if cuda else "Not using CUDA")
     
-    Tensor = torch.cuda.FloatTensor if cuda else torch.Tensor
+    Tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
     
-    if cuda:
-        Net = Net.cuda()
-        criterion = criterion.cuda()
+    Net = Net.to(device)
+    criterion = criterion.to(device)
     
     
     ##############################################
@@ -372,19 +456,22 @@ def main(HP, train_dataloader, validation_dataloader, test_dataloader, cuda_devi
     
     train(
         train_dataloader=train_dataloader,
-        n_epochs=hp.n_epochs,
+        val_dataloader=validation_dataloader,
+        n_epochs=HP['n_epochs'],
         criterion=criterion,
         optimizer=optimizer,
         Tensor=Tensor,
-        early_stop=hp.early_stop,
+        early_stop=HP['early_stop'],
         Net = Net,
-        iteration = iteration
+        batch_size=HP['batch_size'],
+        iteration = iteration,
+        device=device
     )
         
     if validation_dataloader != None:
-        test(validation_dataloader, 'Validation Test', disp_CM=True, Net = Net, Tensor=Tensor)
+        test(validation_dataloader, 'Validation Test', disp_CM=False, Net = Net, Tensor=Tensor, device=device)
     true_list, pred_list, pred_list_raw, accuracy, precision, recall, f_score, cm = test(test_dataloader,
-                                'Experimental Test', disp_CM=True, Net = Net, Tensor=Tensor)
+                                'Experimental Test', disp_CM=False, Net = Net, Tensor=Tensor, device=device)
     fpr, tpr, auc, thresholds = plot_roc(true_list, pred_list_raw)
     plot_threshold(fpr, tpr, thresholds)
     
@@ -393,14 +480,6 @@ def main(HP, train_dataloader, validation_dataloader, test_dataloader, cuda_devi
     plt.show()
     
     # showFailures(true_list, pred_list, test_dataloader)
-    
-    img_idx = 2
-    for img_idx in range(2):
-        data = next(iter(test_dataloader))
-        img = data[0][img_idx].unsqueeze(1)
-        target_class = int(data[1][img_idx]) 
-        target_class = 1
-        visualiseFeatures(Net, img, target_class)
     
     return accuracy, precision, recall, f_score, cm
 

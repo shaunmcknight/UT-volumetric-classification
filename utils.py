@@ -31,7 +31,7 @@ class SyntheticDataset(Dataset):
         self.transform = transforms.Compose(transforms_)
         
         self.files_defect = np.load(glob.glob(os.path.join(root, "%s_defect" % mode) + "/*.*")[0])
-        self.labels_defect = np.zeros(np.shape(self.files_defect)[0])
+        self.labels_defect = np.ones(np.shape(self.files_defect)[0])
         
         self.files_no_defect = np.load(glob.glob(os.path.join(root, "%s_no_defect" % mode) + "/*.*")[0])
         self.labels_no_defect = np.zeros(np.shape(self.files_no_defect)[0])
@@ -40,12 +40,21 @@ class SyntheticDataset(Dataset):
         self.labels = np.concatenate((self.labels_defect, self.labels_no_defect))
             
         print('~~~~ Synthetic dataloader INFO ~~~~~')
-        print('Number defective points train ~ ', len(self.files_defect), 'Max/Min ', np.amax(self.files_defect), np.amin(self.files_defect))
-        print('Number defect free points train ~ ', len(self.files_no_defect), 'Max/Min ', np.amax(self.files_no_defect), np.amin(self.files_no_defect))
+        print('Number defective points ', mode,' ~ ', len(self.files_defect), 
+              'Max/Min ', np.amax(self.files_defect), np.amin(self.files_defect), 
+              ' ~ Shape ', np.shape(self.files_defect[0]))
+        print('Number defect free points ', mode,' ~ ', len(self.files_no_defect), 
+              'Max/Min ', np.amax(self.files_no_defect), np.amin(self.files_no_defect), 
+              ' ~ Shape ', np.shape(self.files_no_defect[0]))
 
     def __getitem__(self, index):
-        data = torch.from_numpy(self.combined_data[index])
+        data = self.combined_data[index]
+        data = torch.from_numpy(np.pad(
+            data, ((0,0), (0, 1024-data.shape[1]), (0,0)),
+            mode='constant', constant_values=0)) # pad depth to 1024
+        data = np.clip(data, 0, 1)
         data = data.unsqueeze(0)
+        #print('shape ', data.shape)
         label = self.labels[index]
         if self.transform != None:
             data = self.transform(data)
@@ -61,7 +70,7 @@ class ExperimentalDataset(Dataset):
         self.transform = transforms.Compose(transforms_)
         
         self.files_defect = np.load(glob.glob(os.path.join(root, "%s_defect" % mode) + "/*.*")[0])
-        self.labels_defect = np.zeros(np.shape(self.files_defect)[0])
+        self.labels_defect = np.ones(np.shape(self.files_defect)[0])
         
         self.files_no_defect = np.load(glob.glob(os.path.join(root, "%s_no_defect" % mode) + "/*.*")[0])
         self.labels_no_defect = np.zeros(np.shape(self.files_no_defect)[0])
@@ -70,11 +79,18 @@ class ExperimentalDataset(Dataset):
         self.labels = np.concatenate((self.labels_defect, self.labels_no_defect))
             
         print('~~~~ Synthetic dataloader INFO ~~~~~')
-        print('Number defective points train ~ ', len(self.files_defect), 'Max/Min ', np.amax(self.files_defect), np.amin(self.files_defect))
-        print('Number defect free points train ~ ', len(self.files_no_defect), 'Max/Min ', np.amax(self.files_no_defect), np.amin(self.files_no_defect))
+        print('Number defective points ', mode,' ~ ', len(self.files_defect),
+              'Max/Min ', np.amax(self.files_defect), np.amin(self.files_defect), 
+              ' ~ Shape ', np.shape(self.files_defect[0]))
+        print('Number defect free points ', mode,' ~ ', len(self.files_no_defect),
+              'Max/Min ', np.amax(self.files_no_defect), np.amin(self.files_no_defect), 
+              ' ~ Shape ', np.shape(self.files_no_defect[0]))
 
     def __getitem__(self, index):
-        data = torch.from_numpy(self.combined_data[index])
+        data = self.combined_data[index]
+        data = torch.from_numpy(np.pad(
+            data, ((0,0), (0, 1024-data.shape[1]), (0,0)),
+            mode='constant', constant_values=0)) # pad depth to 1024
         data = data.unsqueeze(0)
         label = self.labels[index]
         if self.transform != None:

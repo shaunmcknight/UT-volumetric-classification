@@ -14,11 +14,14 @@ from classifier import *
 from train import *
 
 def VisualiseData(dataloader):
-    test_data = next(iter(dataloader))[0][0].squeeze().cpu().detach().numpy()
-    
+    test_data = next(iter(dataloader))
+    image = test_data[0][0].squeeze().cpu().detach().numpy()
+    label = test_data[1][0].squeeze().cpu().detach().numpy()
     # print('Type: ', type(test_data[:,150:450,:]), test_data[:,150:450,:].shape)
+
     plt.figure()
-    plt.imshow(np.amax(test_data[:,150:450,:], axis=1))
+    plt.imshow(np.amax(image[:,150:450,:], axis=1))
+    plt.title(('Label ', (label)))
     plt.show()
     
     fig = plt.figure().add_subplot(projection="3d")
@@ -26,57 +29,72 @@ def VisualiseData(dataloader):
     fig.set_ylabel("Amplitude")
     fig.set_zlabel("Element no.")
     frame = 32
-    for i in range(test_data[:,:,0:64].shape[2]):       
-        xlist = [x for x in range(1, (len(test_data[frame,:, i])+1))]
+    for i in range(image[:,:,0:64].shape[2]):       
+        xlist = [x for x in range(1, (len(image[frame,:, i])+1))]
         plt.plot(
-            xs=xlist, ys=test_data[frame,:, i], zs=i, label='Raw ' + str(i))
+            xs=xlist, ys=image[frame,:, i], zs=i, label='Raw ' + str(i))
         plt.title(("All A-scans of frame: " + str(frame)))
     plt.show()
     
 def experimental(HP, transforms, exp_path, iteration):
 
-    root_test = r"C:\Users\Shaun McKnight\OneDrive - University of Strathclyde\PhD\Data\3D\data\test"
-    root_train = r"C:\Users\Shaun McKnight\OneDrive - University of Strathclyde\PhD\Data\3D\data\noised"
+    root_test = r"C:\Users\CUE-ML\shaun\Datasets\3D\experimental\val test split"
+    root_train = r"C:\Users\CUE-ML\shaun\Datasets\3D\synthetic\complete"
 
-    synthetic_dataloader = DataLoader(
-        SyntheticDataset(root_train, mode=hp.dataset_train_mode, transforms_ = transforms_),
-        batch_size=hp.batch_size,
+    train_dataloader = DataLoader(
+        SyntheticDataset(root_train, mode='train', transforms_ = transforms_),
+        batch_size=HP['batch_size'],
         shuffle=True,
         # num_workers=1,
     )
     
-    experimental_dataloader = DataLoader(
-        ExperimentalDataset(root_test, transforms_=transforms_),
-        batch_size=hp.batch_size,
-        shuffle=False,
-    )
+    # valid_dataloader = DataLoader(
+    #     SyntheticDataset(root_train, mode='valid', transforms_ = transforms_),
+    #     batch_size=HP['batch_size'],
+    #     shuffle=True,
+    #     # num_workers=1,
+    # )
     
-    split_train, split_valid = round(len(synthetic_dataloader.dataset)*0.8), round(
-        len(synthetic_dataloader.dataset))-round(len(synthetic_dataloader.dataset)*0.8)
-    
-    train, valid = torch.utils.data.random_split(
-        synthetic_dataloader.dataset, (split_train, split_valid))
-    
-    train_dataloader = DataLoader(
-        train,
-        batch_size=hp.batch_size,
+    valid_dataloader = DataLoader(
+        ExperimentalDataset(root_test, mode='valid', transforms_ = transforms_),
+        batch_size=HP['batch_size'],
         shuffle=True,
+        # num_workers=1,
+    )
+       
+    experimental_dataloader = DataLoader(
+        ExperimentalDataset(root_test, mode='test', transforms_=transforms_),
+        batch_size=HP['batch_size'],
+        shuffle=False
     )
     
-    test_dataloader = DataLoader(
-        valid,
-        batch_size=hp.batch_size,
-        shuffle=False,
-    )
+    # split = 0.5
+    # split_train, split_valid = round(len(synthetic_dataloader.dataset)*split), round(
+    #     len(synthetic_dataloader.dataset))-round(len(synthetic_dataloader.dataset)*split)
     
-    VisualiseData(synthetic_dataloader)
+    # train, valid = torch.utils.data.random_split(
+    #     synthetic_dataloader.dataset, (split_train, split_valid))
+    
+    # train_dataloader = DataLoader(
+    #     train,
+    #     batch_size=hp.batch_size,
+    #     shuffle=True,
+    # )
+    
+    # valid_dataloader = DataLoader(
+    #     valid,
+    #     batch_size=hp.batch_size,
+    #     shuffle=False,
+    # )
+    
+    VisualiseData(train_dataloader)
+    VisualiseData(valid_dataloader)
     VisualiseData(experimental_dataloader)
 
     accuracy, precision, recall, f_score, cm = main(HP, 
-         train_dataloader=train,
-         validation_dataloader=valid, 
+         train_dataloader=train_dataloader,
+         validation_dataloader=valid_dataloader, 
          test_dataloader=experimental_dataloader, 
-         cuda_device=None,
          iteration = iteration)
     
     return accuracy, precision, recall, f_score, cm
@@ -84,28 +102,40 @@ def experimental(HP, transforms, exp_path, iteration):
 
 
 #optimisation of experimental data
-HP = {'n_epochs': 264,
-      'batch_size': 4, #64
-      'lr': 0.013870869810956584, #0.03,
+HP = {'n_epochs': 10,
+      'batch_size': 32, #4
+      'lr': 0.0005,#0.01#0.03#0.013870869810956584, #0.03,
       'momentum': 0.175764011181887,
-      'early_stop': 1,
-      'conv_layers': 3,
-      'out_channel_ratio': 3,
-      'FC_layers': 1
+      'early_stop': 0.0,
+      'reduction_layers': 4,
+      'conv_layers': 5,# 4 to 6
+      'out_channel_ratio': 2,
+      'kernel_size_reduction': 7,
+      'kernel_size': 3, #3,5,7
+      'pool_layers': 0, #1 to 4
+      'pool_mode': 'max',
+      'FC_layers': 1, #1 to 2
+      'Norm': 'batch'
       }
 
-hp = Hyperparameters(
-    epoch=0,
-    n_epochs=HP['n_epochs'],
-    dataset_train_mode="train",
-    dataset_test_mode="test",
-    batch_size=2,#2**HP['batch_size'],
-    lr=HP['lr'],
-    momentum=HP['momentum'],
-    img_size=64,
-    channels=1,
-    early_stop=HP['early_stop']
-)
+
+"""
+HPO parameters
+
+architecture
+        num CNN layers 1-5
+    kernal size 3,5,7 for internal (3 for others)
+        num FC layers 1-3
+        nodes in FC layers 
+    pool - 2,4,6
+    normalisation
+
+HYPERS
+    batch size
+    LR
+    early stop
+    momentum
+    num epochs"""
 
 
 transforms_ = [
@@ -123,7 +153,9 @@ confusion_matrixes = []
 trps = []
 fprs = []
 
-for i in range(1):
+for i in range(15):
+    
+    torch.cuda.empty_cache()
 
     print('Model iteration ~ ', i)
     
